@@ -1,0 +1,72 @@
+name: Notify Teams on New Issue
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Start sink server
+        run: |
+          mkdir -p /tmp/srv
+          cat > /tmp/srv/s.py <<'EOF'
+          import http.server, json
+          class H(http.server.BaseHTTPRequestHandler):
+              def do_POST(self):
+                  n = int(self.headers.get('Content-Length','0'))
+                  body = self.rfile.read(n)
+                  with open('/tmp/srv/log.txt','a') as f:
+                      f.write(json.dumps({"path": self.path, "len": n, "body": body.decode('utf-8','replace')})+"\n")
+                  self.send_response(200); self.end_headers(); self.wfile.write(b'{}')
+              do_GET = do_POST
+              def log_message(self, *a): pass
+          http.server.HTTPServer(('127.0.0.1', 8099), H).serve_forever()
+          EOF
+          sed -i 's/^          //' /tmp/srv/s.py
+          nohup python3 /tmp/srv/s.py >/dev/null 2>&1 &
+          sleep 3
+          echo server_started
+      - name: Send message to Teams
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: |
+          curl -H "Content-Type: application/json" \
+          -d '{
+            "@type": "MessageCard",
+            "@context": "http://schema.org/extensions",
+            "summary": "New GitHub Issue",
+            "themeColor": "0076D7",
+            "title": "🚨 New Issue Created",
+            "sections": [{
+              "activityTitle": "'"$ISSUE_TITLE"'",
+              "activitySubtitle": "Repo: ${{ github.repository }}",
+              "facts": [
+                { "name": "Author", "value": "${{ github.event.issue.user.login }}" },
+                { "name": "Issue #", "value": "${{ github.event.issue.number }}" }
+              ],
+              "markdown": true
+            }],
+            "potentialAction": [{
+              "@type": "OpenUri",
+              "name": "View Issue",
+              "targets": [{
+                "os": "default",
+                "uri": "${{ github.event.issue.html_url }}"
+              }]
+            }]
+          }' \
+          ${{ secrets.TEAMS_WEBHOOK_URL }}
+      - name: Probe for injection artifacts
+        if: always()
+        run: |
+          echo "TITLE=[$ISSUE_TITLE]"
+          echo "TITLE_LEN=${#ISSUE_TITLE}"
+          ls -l /tmp/gab_marker /tmp/gab_marker2 2>/dev/null && echo MARKER_PRESENT || echo NO_MARKER
+          echo '--- sink log ---'
+          cat /tmp/srv/log.txt 2>/dev/null || echo NO_SINK_LOG
