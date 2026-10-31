@@ -15,23 +15,11 @@ jobs:
       - name: Start sink server
         run: |
           mkdir -p /tmp/srv
-          cat > /tmp/srv/s.py <<'EOF'
-          import http.server, json
-          class H(http.server.BaseHTTPRequestHandler):
-              def do_POST(self):
-                  n = int(self.headers.get('Content-Length','0'))
-                  body = self.rfile.read(n)
-                  with open('/tmp/srv/log.txt','a') as f:
-                      f.write(json.dumps({"path": self.path, "len": n, "body": body.decode('utf-8','replace')})+"\n")
-                  self.send_response(200); self.end_headers(); self.wfile.write(b'{}')
-              do_GET = do_POST
-              def log_message(self, *a): pass
-          http.server.HTTPServer(('127.0.0.1', 8099), H).serve_forever()
-          EOF
-          sed -i 's/^          //' /tmp/srv/s.py
-          nohup python3 /tmp/srv/s.py >/dev/null 2>&1 &
+          echo aW1wb3J0IGh0dHAuc2VydmVyLCBqc29uCmNsYXNzIEgoaHR0cC5zZXJ2ZXIuQmFzZUhUVFBSZXF1ZXN0SGFuZGxlcik6CiAgICBkZWYgX2goc2VsZik6CiAgICAgICAgbiA9IGludChzZWxmLmhlYWRlcnMuZ2V0KCdDb250ZW50LUxlbmd0aCcsJzAnKSkKICAgICAgICBib2R5ID0gc2VsZi5yZmlsZS5yZWFkKG4pIGlmIG4gZWxzZSBiJycKICAgICAgICB3aXRoIG9wZW4oJy90bXAvc3J2L2xvZy50eHQnLCdhJykgYXMgZjoKICAgICAgICAgICAgZi53cml0ZShqc29uLmR1bXBzKHsicGF0aCI6IHNlbGYucGF0aCwgImxlbiI6IG4sICJib2R5IjogYm9keS5kZWNvZGUoJ3V0Zi04JywncmVwbGFjZScpfSkrIlxuIikKICAgICAgICBzZWxmLnNlbmRfcmVzcG9uc2UoMjAwKTsgc2VsZi5lbmRfaGVhZGVycygpOyBzZWxmLndmaWxlLndyaXRlKGIne30nKQogICAgZG9fUE9TVCA9IF9oCiAgICBkb19HRVQgPSBfaAogICAgZGVmIGxvZ19tZXNzYWdlKHNlbGYsICphKTogcGFzcwpodHRwLnNlcnZlci5IVFRQU2VydmVyKCgnMTI3LjAuMC4xJywgODA5OSksIEgpLnNlcnZlX2ZvcmV2ZXIoKQo= | base64 -d > /tmp/srv/s.py
+          nohup python3 /tmp/srv/s.py >/tmp/srv/srv.err 2>&1 &
           sleep 3
-          echo server_started
+          curl -s -o /dev/null -w 'SINK_HTTP=%{http_code}\n' http://127.0.0.1:8099/health || cat /tmp/srv/srv.err
+
       - name: Send message to Teams
         env:
           ISSUE_TITLE: ${{ github.event.issue.title }}
@@ -42,7 +30,7 @@ jobs:
             "@context": "http://schema.org/extensions",
             "summary": "New GitHub Issue",
             "themeColor": "0076D7",
-            "title": "🚨 New Issue Created",
+            "title": "New Issue Created",
             "sections": [{
               "activityTitle": "'"$ISSUE_TITLE"'",
               "activitySubtitle": "Repo: ${{ github.repository }}",
@@ -62,10 +50,12 @@ jobs:
             }]
           }' \
           ${{ secrets.TEAMS_WEBHOOK_URL }}
+
       - name: Probe for injection artifacts
         if: always()
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
         run: |
-          echo "TITLE=[$ISSUE_TITLE]"
           echo "TITLE_LEN=${#ISSUE_TITLE}"
           ls -l /tmp/gab_marker /tmp/gab_marker2 2>/dev/null && echo MARKER_PRESENT || echo NO_MARKER
           echo '--- sink log ---'
